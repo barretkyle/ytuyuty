@@ -1,0 +1,54 @@
+name: RDP Access via GitHub Actions
+
+on: 
+  [push, workflow_dispatch]
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - name: Download ngrok
+      run: Invoke-WebRequest https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip -OutFile ngrok.zip
+
+    - name: Extract ngrok
+      run: Expand-Archive ngrok.zip -Force
+
+    - name: Clean up downloaded zip
+      run: Remove-Item ngrok.zip -Force
+
+    - name: Authenticate ngrok
+      run: .\ngrok\ngrok.exe authtoken $Env:NGROK_AUTH_TOKEN
+      env:
+        NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
+
+    - name: Enable RDP (Terminal Server)
+      run: |
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
+        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 1
+
+    - name: Set Password for RDP Admin User
+      run: Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "P@ssw0rd!" -Force)
+
+    - name: Start ngrok Tunnel for RDP (3389)
+      run: |
+        Start-Process -NoNewWindow -FilePath ".\ngrok\ngrok.exe" -ArgumentList "tcp", "3389" -PassThru
+
+    - name: Wait for ngrok to start
+      run: Start-Sleep -Seconds 10
+
+    - name: Get ngrok URL
+      run: |
+        $ngrok_info = .\ngrok\ngrok.exe tcp 3389
+        Write-Host "ngrok URL: $ngrok_info"
+
+    - name: Output the RDP URL
+      run: |
+        $ngrok_output = Get-Content .\ngrok\ngrok.log -Raw
+        if ($ngrok_output -match "tcp://(.*)") {
+          Write-Host "RDP URL is: $($matches[1])"
+        } else {
+          Write-Host "ngrok tunnel failed to start."
+          exit 1
+        }
